@@ -8,6 +8,7 @@ import {
     updateData,
     updateDailyData,
     updateAdjustFactorData,
+    updateDailyBasicData,
 } from "./stockdata-update";
 
 export {
@@ -18,4 +19,5 @@ export {
     updateData,
     updateDailyData,
     updateAdjustFactorData,
+    updateDailyBasicData,
 };

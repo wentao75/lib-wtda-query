@@ -18,21 +18,18 @@ const fp = fs.promises;
 const pino = require("pino");
 
 const logger = pino({
-    // level: ,
+    level: process.env.LOGGER || "info",
     prettyPrint: {
         levelFirst: true,
-        translateTime: "SYS:standard",
+        translateTime: "SYS:yyyy-yy-dd HH:MM:ss.l",
         crlf: true,
     },
     prettifier: require("pino-pretty"),
 });
 
-if (process.env.LOGGER) {
-    logger.level = process.env.LOGGER;
-}
-
 const DATA_ROOT = ".wtda";
 const DAILYHISTORY_PATH = "daily";
+const INFO_PATH = "info";
 const STOCKLIST_FILE = "stock-list.json";
 const INDEXLIST_FILE = "index-list.json";
 
@@ -161,7 +158,10 @@ async function readStockAdjustFactor(tsCode) {
     if (_.isEmpty(tsCode)) {
         throw new Error("未设置读取股票代码");
     }
-    let adjData = [];
+    let adjData = {
+        updateTime: null,
+        data: [],
+    };
     try {
         await checkDataPath();
 
@@ -174,12 +174,46 @@ async function readStockAdjustFactor(tsCode) {
             adjData = JSON.parse(await fp.readFile(stockAdjFile, "utf-8"));
         } catch (error) {
             logger.debug(`读取股票复权因子文件${stockAdjFile} 错误：${error}`);
-            adjData = [];
+            adjData = {
+                updateTime: null,
+                data: [],
+            };
         }
     } catch (error) {
         logger.error(`从本地读取日线复权因子数据时发生错误 ${error}`);
     }
     return adjData;
+}
+
+async function readStockDailyBasic(tsCode) {
+    if (_.isEmpty(tsCode)) {
+        throw new Error("未设置读取股票代码");
+    }
+    let basicData = {
+        updateTime: null,
+        data: [],
+    };
+    try {
+        await checkDataPath();
+
+        let stockBasicFile = path.join(
+            getDataRoot(),
+            INFO_PATH,
+            tsCode + ".info.json"
+        );
+        try {
+            basicData = JSON.parse(await fp.readFile(stockBasicFile, "utf-8"));
+        } catch (error) {
+            logger.debug(`读取基本面文件${stockBasicFile} 错误：${error}`);
+            basicData = {
+                updateTime: null,
+                data: [],
+            };
+        }
+    } catch (error) {
+        logger.error(`从本地读取基本面数据时发生错误 ${error}`);
+    }
+    return basicData;
 }
 
 async function checkDataPath() {
@@ -206,6 +240,17 @@ async function checkDataPath() {
         logger.debug(`检查日线历史目录错误 ${error}`);
         await fp.mkdir(dailyPath, { recursive: true });
     }
+
+    let infoPath = path.join(dataPath, INFO_PATH);
+    try {
+        await fp.access(
+            infoPath,
+            fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK
+        );
+    } catch (error) {
+        logger.debug(`检查信息数据目录错误 ${error}`);
+        await fp.mkdir(infoPath, { recursive: true });
+    }
 }
 
 export {
@@ -213,10 +258,12 @@ export {
     readStockIndexList,
     readStockDaily,
     readStockAdjustFactor,
+    readStockDailyBasic,
     checkDataPath,
     getDataRoot,
     DATA_ROOT,
     DAILYHISTORY_PATH,
+    INFO_PATH,
     STOCKLIST_FILE,
     INDEXLIST_FILE,
 };
