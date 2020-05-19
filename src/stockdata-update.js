@@ -19,7 +19,7 @@ const logger = pino({
     level: process.env.LOGGER || "info",
     prettyPrint: {
         levelFirst: true,
-        translateTime: "SYS:yyyy-yy-dd HH:MM:ss.l",
+        translateTime: "SYS:yyyy-mm-dd HH:MM:ss.l",
         crlf: true,
     },
     prettifier: require("pino-pretty"),
