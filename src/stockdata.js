@@ -1,27 +1,21 @@
 import {
+    readStockData,
     readStockList,
     readStockIndexList,
-    readStockDaily,
 } from "./stockdata-query";
 import {
     clearAllData,
     updateData,
     updateStockInfoData,
-    updateDailyData,
-    updateAdjustFactorData,
-    updateDailyBasicData,
     stockDataNames,
 } from "./stockdata-update";
 
 export {
+    readStockData,
     readStockList,
     readStockIndexList,
-    readStockDaily,
     clearAllData,
     updateData,
     updateStockInfoData,
-    updateDailyData,
-    updateAdjustFactorData,
-    updateDailyBasicData,
     stockDataNames,
 };
