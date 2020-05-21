@@ -27,14 +27,20 @@ const logger = pino({
     prettifier: require("pino-pretty"),
 });
 
-const DATA_ROOT = ".wtda";
-const DAILYHISTORY_PATH = "daily";
-const INFO_PATH = "info";
+const DATA_PATH_ROOT = ".wtda";
+const DATA_PATH = {
+    daily: "daily",
+    info: "info",
+    financial: "fin",
+};
+
+// const DAILYHISTORY_PATH = "daily";
+// const INFO_PATH = "info";
 const STOCKLIST_FILE = "stock-list.json";
 const INDEXLIST_FILE = "index-list.json";
 
 function getDataRoot() {
-    return path.join(os.homedir(), DATA_ROOT);
+    return path.join(os.homedir(), DATA_PATH_ROOT);
 }
 
 /**
@@ -122,6 +128,135 @@ async function readStockIndexList() {
     return retData;
 }
 
+const stockDataNames = {
+    // 日数据
+    daily: "daily",
+    // 复权因子
+    adjustFactor: "adjustFactor",
+    // 停复牌信息
+    suspendInfo: "suspendInfo",
+    // 基本面信息
+    dailyBasic: "dailyBasic",
+    // 个股资金流向
+    moneyFlow: "moneyFlow",
+    // // 指数
+    // indexDailyBasic: "indexDailyBasic",
+    // 指数日线
+    indexDaily: "indexDaily",
+    // 利润表
+    income: "income",
+    // 负债表
+    balanceSheet: "balanceSheet",
+    // 现金流
+    cashFlow: "cashFlow",
+    // 业绩预告
+    forecast: "forecast",
+    // 业绩快报
+    express: "express",
+    // 分红送股
+    dividend: "dividend",
+    // 财务指标数据
+    financialIndicator: "financialIndicator",
+    // 主营业务构成
+    financialMainbiz: "financialMainbiz",
+    // 财报披露日期
+    disclosureDate: "disclosureDate",
+};
+
+const stockDataParams = {
+    // 日数据
+    daily: { name: "daily", path: DATA_PATH.daily, ext: "" },
+    // 复权因子
+    adjustFactor: { name: "adjustFactor", path: DATA_PATH.daily, ext: ".adj" },
+    // 停复牌信息
+    suspendInfo: { name: "suspendInfo", path: DATA_PATH.info, ext: ".sus" },
+    // 基本面信息
+    dailyBasic: { name: "dailyBasic", path: DATA_PATH.info, ext: ".bsc" },
+    // 个股资金流向
+    moneyFlow: { name: "moneyFlow", path: DATA_PATH.info, ext: ".mf" },
+    // // 指数
+    // indexDailyBasic: "indexDailyBasic",
+    // 指数日线
+    indexDaily: { name: "indexDaily", path: DATA_PATH.daily, ext: "" },
+    // 利润表
+    income: { name: "income", path: DATA_PATH.financial, ext: ".ic" },
+    // 负债表
+    balanceSheet: {
+        name: "balanceSheet",
+        path: DATA_PATH.financial,
+        ext: ".bs",
+    },
+    // 现金流
+    cashFlow: { name: "cashFlow", path: DATA_PATH.financial, ext: ".cf" },
+    // 业绩预告
+    forecast: { name: "forecast", path: DATA_PATH.financial, ext: ".fc" },
+    // 业绩快报
+    express: { name: "express", path: DATA_PATH.financial, ext: ".ep" },
+    // 分红送股
+    dividend: { name: "dividend", path: DATA_PATH.financial, ext: ".dd" },
+    // 财务指标数据
+    financialIndicator: {
+        name: "financialIndicator",
+        path: DATA_PATH.financial,
+        ext: ".id",
+    },
+    // 主营业务构成
+    financialMainbiz: {
+        name: "financialMainbiz",
+        path: DATA_PATH.financial,
+        ext: ".mb",
+    },
+    // 财报披露日期
+    disclosureDate: {
+        name: "disclosureDate",
+        path: DATA_PATH.financial,
+        ext: ".dt",
+    },
+};
+
+async function readStockData(dataName, tsCode) {
+    if (!stockDataNames[dataName]) {
+        throw new Error("不支持的数据类型：" + dataName);
+    }
+    if (_.isEmpty(tsCode)) {
+        throw new Error("未设置读取股票代码");
+    }
+    let retData = {
+        updateTime: null,
+        data: [],
+        // 下面考虑放个字段说明
+    };
+
+    let params = stockDataParams[dataName];
+    try {
+        await checkDataPath();
+
+        let dataFile = getStockDataFile(dataName, tsCode);
+        try {
+            dailyData = JSON.parse(await fp.readFile(dataFile, "utf-8"));
+        } catch (error) {
+            // 文件不存在，不考虑其它错误
+            dailyData = { data: [] };
+        }
+    } catch (error) {
+        logger.error(`从本地读取个股数据${dataName}时发生错误 ${error}`);
+    }
+    return dailyData;
+}
+
+async function getStockDataFile(dataName, tsCode) {
+    // logger.debug(`计算文件名：${dataName}, ${tsCode}`);
+    let params = stockDataParams[dataName];
+    // logger.debug("获取参数：%o", params);
+    if (!params) {
+        throw new Error("不支持的数据类型" + dataName);
+    }
+    if (_.isEmpty(tsCode)) {
+        throw new Error("未设置读取股票代码");
+    }
+    return path.join(getDataRoot(), params.path, tsCode + params.ext + ".json");
+}
+
 async function readStockDaily(tsCode) {
     if (_.isEmpty(tsCode)) {
         throw new Error("未设置读取股票代码");
@@ -135,7 +270,7 @@ async function readStockDaily(tsCode) {
 
         let stockDailyHistoryFile = path.join(
             getDataRoot(),
-            DAILYHISTORY_PATH,
+            DATA_PATH.daily,
             tsCode + ".json"
         );
         try {
@@ -167,7 +302,7 @@ async function readStockAdjustFactor(tsCode) {
 
         let stockAdjFile = path.join(
             getDataRoot(),
-            DAILYHISTORY_PATH,
+            DATA_PATH.daily,
             tsCode + ".adj.json"
         );
         try {
@@ -198,7 +333,7 @@ async function readStockDailyBasic(tsCode) {
 
         let stockBasicFile = path.join(
             getDataRoot(),
-            INFO_PATH,
+            DATA_PATH.info,
             tsCode + ".info.json"
         );
         try {
@@ -217,7 +352,7 @@ async function readStockDailyBasic(tsCode) {
 }
 
 async function checkDataPath() {
-    let dataPath = getDataRoot(); // path.join(os.homedir, DATA_ROOT)
+    let dataPath = getDataRoot();
 
     // 做基础的目录访问检查
     try {
@@ -230,30 +365,43 @@ async function checkDataPath() {
         await fp.mkdir(dataPath, { recursive: true });
     }
 
-    let dailyPath = path.join(dataPath, DAILYHISTORY_PATH);
-    try {
-        await fp.access(
-            dailyPath,
-            fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK
-        );
-    } catch (error) {
-        logger.debug(`检查日线历史目录错误 ${error}`);
-        await fp.mkdir(dailyPath, { recursive: true });
+    for (let key of Object.keys(DATA_PATH)) {
+        let tmpPath = path.join(dataPath, DATA_PATH[key]);
+        try {
+            await fp.access(
+                tmpPath,
+                fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK
+            );
+        } catch (error) {
+            logger.debug(`检查目录${DATA_PATH[key]}错误 ${error}`);
+            await fp.mkdir(tmpPath, { recursive: true });
+        }
     }
+    // let dailyPath = path.join(dataPath, DATA_PATH.daily);
+    // try {
+    //     await fp.access(
+    //         dailyPath,
+    //         fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK
+    //     );
+    // } catch (error) {
+    //     logger.debug(`检查日线历史目录错误 ${error}`);
+    //     await fp.mkdir(dailyPath, { recursive: true });
+    // }
 
-    let infoPath = path.join(dataPath, INFO_PATH);
-    try {
-        await fp.access(
-            infoPath,
-            fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK
-        );
-    } catch (error) {
-        logger.debug(`检查信息数据目录错误 ${error}`);
-        await fp.mkdir(infoPath, { recursive: true });
-    }
+    // let infoPath = path.join(dataPath, DATA_PATH.info);
+    // try {
+    //     await fp.access(
+    //         infoPath,
+    //         fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK
+    //     );
+    // } catch (error) {
+    //     logger.debug(`检查信息数据目录错误 ${error}`);
+    //     await fp.mkdir(infoPath, { recursive: true });
+    // }
 }
 
 export {
+    readStockData,
     readStockList,
     readStockIndexList,
     readStockDaily,
@@ -261,9 +409,10 @@ export {
     readStockDailyBasic,
     checkDataPath,
     getDataRoot,
-    DATA_ROOT,
-    DAILYHISTORY_PATH,
-    INFO_PATH,
+    getStockDataFile,
+    DATA_PATH_ROOT,
+    DATA_PATH,
     STOCKLIST_FILE,
     INDEXLIST_FILE,
+    stockDataNames,
 };

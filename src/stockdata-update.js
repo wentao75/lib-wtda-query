@@ -33,10 +33,11 @@ import {
     readStockDailyBasic,
     checkDataPath,
     getDataRoot,
-    DAILYHISTORY_PATH,
-    INFO_PATH,
+    getStockDataFile,
+    DATA_PATH,
     STOCKLIST_FILE,
     INDEXLIST_FILE,
+    stockDataNames,
 } from "./stockdata-query";
 
 // const os = require("os")
@@ -46,6 +47,114 @@ const fp = fs.promises;
 
 const QUEUE_MAX = 20;
 // const updateControl = new FlowControl(QUEUE_MAX, 0, "更新数据控制池");
+
+/**
+ * 更新个股信息数据，包括个股的日数据，基本面，复权因子，财务相关的各种数据；
+ *
+ * @param {string} dataName 数据名称
+ * @param {string} tsCode 股票代码
+ * @param {boolean} force 是否强制全部更新
+ */
+async function updateStockInfoData(dataName, tsCode, force = false) {
+    // logger.log("更新日线：", tsCode, force)
+    if (_.isEmpty(dataName) || !stockDataNames[dataName]) {
+        throw Error("请填写正确的个股数据名称！" + dataName);
+    }
+    if (_.isEmpty(tsCode)) {
+        return { data: [] };
+    }
+
+    let stockData;
+    try {
+        if (force) {
+            logger.debug(`需要强制更新数据：${tsCode}`);
+            try {
+                let [data, endDate, startDate] = await tushare.queryStockInfo(
+                    dataName,
+                    tsCode
+                );
+
+                stockData = {
+                    updateTime: moment().toISOString(),
+                    startDate,
+                    endDate,
+                    data,
+                };
+                logger.info(
+                    `个股数据${dataName}强制更新，代码 ${tsCode}, 更新时间：${
+                        stockData.updateTime
+                    }, 更新时间范围: ${startDate} - ${endDate}, 总条数：${
+                        stockData.data && stockData.data.length
+                    }`
+                );
+            } catch (error) {
+                logger.error(
+                    `强制更新个股${tsCode}数据${dataName}时出现错误：${error}`
+                );
+                throw error;
+            }
+        } else {
+            stockData = await readStockData(dataName, tsCode);
+
+            let startDate = "";
+            if (stockData.data && stockData.data.length > 0) {
+                let lastDate = stockData.endDate;
+                startDate = moment(lastDate, "YYYYMMDD")
+                    .add(1, "days")
+                    .format("YYYYMMDD");
+                let now = moment();
+                if (now.diff(startDate, "days") <= 0 && now.hours() < 15) {
+                    // 还没有最新一天的数据，不需要
+                    logger.log(`没有新的数据，不需要更新 ${tsCode}`);
+                    return;
+                }
+            }
+
+            let [
+                newData,
+                endDate,
+                queryStartDate,
+            ] = await tushare.queryStockInfo(dataName, tsCode, startDate);
+
+            if (newData && newData.length > 0) {
+                stockData.updateTime = moment().toISOString();
+                //stockData.startDate = startDate;
+                stockData.endDate = endDate;
+                stockData.data.unshift(...newData);
+                logger.info(
+                    `个股数据${dataName}更新，代码 ${tsCode}, 更新时间：${
+                        dailyData.updateTime
+                    }, 更新时间范围: ${queryStartDate} - ${endDate}, 更新条数：${
+                        newData && newData.length
+                    }，总条数：${dailyData.data && dailyData.data.length}`
+                );
+            } else {
+                dailyData = null;
+                logger.info(`个股数据${dataName}没有更新，代码 ${tsCode}`);
+            }
+        }
+    } catch (error) {
+        logger.error(`${tsCode} 个股数据${dataName}更新时发生错误，${error}`);
+        throw error;
+    }
+
+    try {
+        if (stockData && stockData.data && stockData.data.length > 0) {
+            await checkDataPath();
+
+            let jsonStr = JSON.stringify(stockData);
+            let stockDataFile = await getStockDataFile(dataName, tsCode);
+            logger.debug(
+                `保存个股${tsCode}数据${dataName}到：${stockDataFile}`
+            );
+            await fp.writeFile(stockDataFile, jsonStr, "utf-8");
+        }
+    } catch (error) {
+        throw new Error(
+            `保存个股${tsCode}数据${dataName}时出现错误，请检查后重新执行：${error}`
+        );
+    }
+}
 
 /**
  * 数据更新，如果force为true，则需要将所有数据更新为最新（相当于全部重新读取）
@@ -116,77 +225,114 @@ async function updateData(
     await saveListFile(indexList, INDEXLIST_FILE);
     logger.info("更新指数列表数据完成！");
 
+    // 下面针对已经获取的股票列表和指数列表，按照列表需要更新对应的每日信息，展开方式为每个股票按照时间段（更新或全部）进行
+    // 初步的方法采用的是每个列表针对更新的信息，生成任务队列，然后异步排队执行（executeTasks）
+    // 因为服务器按照不同的数据接口进行流控，本地队列放置过多的并发执行造成内存和执行效率，因此有并发执行数量以及相同接口流控两层控制
+    // 为了加开效率，考虑将并发执行改变为二维数组，即可以考虑一次提交多个流控的队列给executeTasks，流控应当在并行过程中平均分配多个
+    // 不同的执行队列，这样可以把执行效率提高到较好的状态
+
+    let totalStockWorkers = [];
+    let taskCount = 0;
+    if (all) {
+        taskCount = 3;
+    } else {
+        if (includeStock) taskCount++;
+        if (includeFactor) taskCount++;
+        if (includeBasic) taskCount++;
+    }
+    // 这里定义股票任务的序号，根据传入的参数决定
+    let taskIndex = 0;
+
     if (all || includeStock) {
         logger.info("开始更新股票日线数据...");
         // 这里直接采用Promise的方式
         if (_.isArray(stockBasicData) && stockBasicData.length > 0) {
-            let tasks = stockBasicData.map((item) => {
-                return {
+            //let tasks =
+            stockBasicData.forEach((item, index) => {
+                totalStockWorkers[index * taskCount + taskIndex] = {
                     caller: updateDailyData,
                     args: [item.ts_code, force, "S"],
                 };
             });
 
-            let workers = executeTasks(tasks, 20, "股票日线更新任务");
-
-            try {
-                logger.debug("等待股票日线更新队列完成...");
-                await Promise.all(workers);
-                logger.debug("股票日线更新队列全部执行完毕！");
-            } catch (error) {
-                logger.error(`股票日线任务执行 错误！${error}`);
-            }
+            // let workers = executeTasks(tasks, 20, "股票日线更新任务");
+            // try {
+            //     logger.debug("等待股票日线更新队列完成...");
+            //     await Promise.all(workers);
+            //     logger.debug("股票日线更新队列全部执行完毕！");
+            // } catch (error) {
+            //     logger.error(`股票日线任务执行 错误！${error}`);
+            // }
         }
-        logger.info(tushare.showInfo());
+        // logger.info(tushare.showInfo());
         logger.info("股票日线数据更新完毕!");
+        taskIndex++;
     }
 
     if (all || includeFactor) {
         logger.info("开始更新股票复权因子数据...");
         // 这里直接采用Promise的方式
         if (_.isArray(stockBasicData) && stockBasicData.length > 0) {
-            let tasks = stockBasicData.map((item) => {
-                return {
+            //let tasks =
+            stockBasicData.forEach((item, index) => {
+                totalStockWorkers[taskCount * index + taskIndex] = {
                     caller: updateAdjustFactorData,
                     args: [item.ts_code, force],
                 };
             });
-            let workers = executeTasks(tasks, 20, "股票复权因子更新任务");
-            try {
-                logger.debug("等待股票日线复权因子更新队列完成...");
-                await Promise.all(workers);
-                logger.debug("股票日线复权因子更新队列全部执行完毕！");
-            } catch (error) {
-                logger.error(`股票日线复权因子任务执行 错误！${error}`);
-            }
+
+            // let workers = executeTasks(tasks, 20, "股票复权因子更新任务");
+            // try {
+            //     logger.debug("等待股票日线复权因子更新队列完成...");
+            //     await Promise.all(workers);
+            //     logger.debug("股票日线复权因子更新队列全部执行完毕！");
+            // } catch (error) {
+            //     logger.error(`股票日线复权因子任务执行 错误！${error}`);
+            // }
         }
 
-        logger.info(tushare.showInfo());
+        // logger.info(tushare.showInfo());
         logger.info("股票复权因子数据更新完毕!");
+        taskIndex++;
     }
 
     if (all || includeBasic) {
         logger.info("开始更新基本面数据...");
         // 这里直接采用Promise的方式
         if (_.isArray(stockBasicData) && stockBasicData.length > 0) {
-            let tasks = stockBasicData.map((item) => {
-                return {
+            // let tasks =
+            stockBasicData.forEach((item, index) => {
+                totalStockWorkers[taskCount * index + taskIndex] = {
                     caller: updateDailyBasicData,
                     args: [item.ts_code, force],
                 };
             });
-            let workers = executeTasks(tasks, 20, "基本面更新任务");
-            try {
-                logger.debug("等待基本面数据更新队列完成...");
-                await Promise.all(workers);
-                logger.debug("基本面数据更新队列全部执行完毕！");
-            } catch (error) {
-                logger.error(`股票基本面更新任务执行 错误！${error}`);
-            }
+
+            // let workers = executeTasks(tasks, 20, "基本面更新任务");
+            // try {
+            //     logger.debug("等待基本面数据更新队列完成...");
+            //     await Promise.all(workers);
+            //     logger.debug("基本面数据更新队列全部执行完毕！");
+            // } catch (error) {
+            //     logger.error(`股票基本面更新任务执行 错误！${error}`);
+            // }
         }
 
-        logger.info(tushare.showInfo());
+        // logger.info(tushare.showInfo());
         logger.info("股票基本面数据更新完毕!");
+        taskIndex++;
+    }
+
+    if (totalStockWorkers && totalStockWorkers.length > 0) {
+        let workers = executeTasks(totalStockWorkers, 30, "个股信息更新任务");
+        try {
+            logger.debug("等待个股数据更新队列完成...");
+            await Promise.all(workers);
+            logger.info(tushare.showInfo());
+            logger.debug("个股数据更新队列全部执行完毕！");
+        } catch (error) {
+            logger.error(`个股数据更新任务执行 错误！${error}`);
+        }
     }
 
     // For test
@@ -213,10 +359,9 @@ async function updateData(
             } catch (error) {
                 logger.error(`指数日线任务执行 错误：%o`, error);
             }
-
-            logger.info(tushare.showInfo());
-            logger.info("指数日线数据更新完毕！");
         }
+        logger.info(tushare.showInfo());
+        logger.info("指数日线数据更新完毕！");
     }
 
     // logger.log(tushare.showInfo());
@@ -308,7 +453,7 @@ async function updateDailyData(tsCode, force = false, type = "S") {
             let jsonStr = JSON.stringify(dailyData);
             let stockDailyFile = path.join(
                 getDataRoot(),
-                DAILYHISTORY_PATH,
+                DATA_PATH.daily,
                 tsCode + ".json"
             );
             await fp.writeFile(stockDailyFile, jsonStr, "utf-8");
@@ -395,7 +540,7 @@ async function updateAdjustFactorData(tsCode, force = false) {
             let jsonStr = JSON.stringify(adjData);
             let adjFile = path.join(
                 getDataRoot(),
-                DAILYHISTORY_PATH,
+                DATA_PATH.daily,
                 tsCode + ".adj.json"
             );
             await fp.writeFile(adjFile, jsonStr, "utf-8");
@@ -476,7 +621,7 @@ async function updateDailyBasicData(tsCode, force = false) {
             let jsonStr = JSON.stringify(adjData);
             let adjFile = path.join(
                 getDataRoot(),
-                INFO_PATH,
+                DATA_PATH.info,
                 tsCode + ".basic.json"
             );
             await fp.writeFile(adjFile, jsonStr, "utf-8");
@@ -584,7 +729,7 @@ async function clearAllData() {
 
         logger.info("清理股票历史数据...");
         // 下面删除股票历史数据目录
-        let stockDailyHistoryPath = path.join(getDataRoot(), DAILYHISTORY_PATH);
+        let stockDailyHistoryPath = path.join(getDataRoot(), DATA_PATH.daily);
         try {
             await fp.access(stockDailyHistoryPath, fs.constants.F_OK);
 
@@ -610,7 +755,9 @@ async function clearAllData() {
 export {
     clearAllData,
     updateData,
+    updateStockInfoData,
     updateDailyData,
     updateAdjustFactorData,
     updateDailyBasicData,
+    stockDataNames,
 };

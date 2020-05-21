@@ -6,9 +6,11 @@ import {
 import {
     clearAllData,
     updateData,
+    updateStockInfoData,
     updateDailyData,
     updateAdjustFactorData,
     updateDailyBasicData,
+    stockDataNames,
 } from "./stockdata-update";
 
 export {
@@ -17,7 +19,9 @@ export {
     readStockDaily,
     clearAllData,
     updateData,
+    updateStockInfoData,
     updateDailyData,
     updateAdjustFactorData,
     updateDailyBasicData,
+    stockDataNames,
 };
