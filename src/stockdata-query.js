@@ -161,6 +161,10 @@ const stockDataNames = {
     financialMainbiz: "financialMainbiz",
     // 财报披露日期
     disclosureDate: "disclosureDate",
+    // 股权质押统计
+    pledgeStat: "pledgeStat",
+    // 股权质押明细
+    pledgeDetail: "pledgeDetail",
 };
 
 const stockDataParams = {
@@ -192,7 +196,7 @@ const stockDataParams = {
     forecast: { name: "forecast", path: DATA_PATH.financial, ext: ".fc" },
     // 业绩快报
     express: { name: "express", path: DATA_PATH.financial, ext: ".ep" },
-    // 分红送股
+    // 分红送股，这个数据不能使用通用方式
     dividend: { name: "dividend", path: DATA_PATH.financial, ext: ".dd" },
     // 财务指标数据
     financialIndicator: {
@@ -211,6 +215,14 @@ const stockDataParams = {
         name: "disclosureDate",
         path: DATA_PATH.financial,
         ext: ".dt",
+    },
+    // 股权质押统计
+    pledgeStat: { name: "pledgeStat", path: DATA_PATH.financial, ext: ".ps" },
+    // 股权质押明细
+    pledgeDetail: {
+        name: "pledgeDetail",
+        path: DATA_PATH.financial,
+        ext: ".pd",
     },
 };
 
@@ -232,10 +244,15 @@ async function readStockData(dataName, tsCode) {
         await checkDataPath();
 
         let dataFile = getStockDataFile(dataName, tsCode);
+        logger.debug(
+            `读取本地数据 ${tsCode}.${dataName}，参数配置 %o，文件 ${dataFile}`,
+            params
+        );
         try {
             retData = JSON.parse(await fp.readFile(dataFile, "utf-8"));
         } catch (error) {
             // 文件不存在，不考虑其它错误
+            logger.debug(`读取文件时发生错误：${error}`);
             retData = { data: [] };
         }
     } catch (error) {
@@ -244,7 +261,7 @@ async function readStockData(dataName, tsCode) {
     return retData;
 }
 
-async function getStockDataFile(dataName, tsCode) {
+function getStockDataFile(dataName, tsCode) {
     // logger.debug(`计算文件名：${dataName}, ${tsCode}`);
     let params = stockDataParams[dataName];
     // logger.debug("获取参数：%o", params);
@@ -256,100 +273,6 @@ async function getStockDataFile(dataName, tsCode) {
     }
     return path.join(getDataRoot(), params.path, tsCode + params.ext + ".json");
 }
-
-// async function readStockDaily(tsCode) {
-//     if (_.isEmpty(tsCode)) {
-//         throw new Error("未设置读取股票代码");
-//     }
-//     let dailyData = {
-//         updateTime: null,
-//         data: [],
-//     };
-//     try {
-//         await checkDataPath();
-
-//         let stockDailyHistoryFile = path.join(
-//             getDataRoot(),
-//             DATA_PATH.daily,
-//             tsCode + ".json"
-//         );
-//         try {
-//             // await fp.access(stockDailyHistoryFile, fs.constants.F_OK)
-//             dailyData = JSON.parse(
-//                 await fp.readFile(stockDailyHistoryFile, "utf-8")
-//             );
-//         } catch (error) {
-//             // logger.debug("读取本地日线数据错误", error)
-//             // 文件不存在，不考虑其它错误
-//             dailyData = { data: [] };
-//         }
-//     } catch (error) {
-//         logger.error(`从本地读取日线数据时发生错误 ${error}`);
-//     }
-//     return dailyData;
-// }
-
-// async function readStockAdjustFactor(tsCode) {
-//     if (_.isEmpty(tsCode)) {
-//         throw new Error("未设置读取股票代码");
-//     }
-//     let adjData = {
-//         updateTime: null,
-//         data: [],
-//     };
-//     try {
-//         await checkDataPath();
-
-//         let stockAdjFile = path.join(
-//             getDataRoot(),
-//             DATA_PATH.daily,
-//             tsCode + ".adj.json"
-//         );
-//         try {
-//             adjData = JSON.parse(await fp.readFile(stockAdjFile, "utf-8"));
-//         } catch (error) {
-//             logger.debug(`读取股票复权因子文件${stockAdjFile} 错误：${error}`);
-//             adjData = {
-//                 updateTime: null,
-//                 data: [],
-//             };
-//         }
-//     } catch (error) {
-//         logger.error(`从本地读取日线复权因子数据时发生错误 ${error}`);
-//     }
-//     return adjData;
-// }
-
-// async function readStockDailyBasic(tsCode) {
-//     if (_.isEmpty(tsCode)) {
-//         throw new Error("未设置读取股票代码");
-//     }
-//     let basicData = {
-//         updateTime: null,
-//         data: [],
-//     };
-//     try {
-//         await checkDataPath();
-
-//         let stockBasicFile = path.join(
-//             getDataRoot(),
-//             DATA_PATH.info,
-//             tsCode + ".info.json"
-//         );
-//         try {
-//             basicData = JSON.parse(await fp.readFile(stockBasicFile, "utf-8"));
-//         } catch (error) {
-//             logger.debug(`读取基本面文件${stockBasicFile} 错误：${error}`);
-//             basicData = {
-//                 updateTime: null,
-//                 data: [],
-//             };
-//         }
-//     } catch (error) {
-//         logger.error(`从本地读取基本面数据时发生错误 ${error}`);
-//     }
-//     return basicData;
-// }
 
 async function checkDataPath() {
     let dataPath = getDataRoot();
@@ -377,27 +300,6 @@ async function checkDataPath() {
             await fp.mkdir(tmpPath, { recursive: true });
         }
     }
-    // let dailyPath = path.join(dataPath, DATA_PATH.daily);
-    // try {
-    //     await fp.access(
-    //         dailyPath,
-    //         fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK
-    //     );
-    // } catch (error) {
-    //     logger.debug(`检查日线历史目录错误 ${error}`);
-    //     await fp.mkdir(dailyPath, { recursive: true });
-    // }
-
-    // let infoPath = path.join(dataPath, DATA_PATH.info);
-    // try {
-    //     await fp.access(
-    //         infoPath,
-    //         fs.constants.F_OK | fs.constants.R_OK | fs.constants.W_OK
-    //     );
-    // } catch (error) {
-    //     logger.debug(`检查信息数据目录错误 ${error}`);
-    //     await fp.mkdir(infoPath, { recursive: true });
-    // }
 }
 
 checkDataPath();
