@@ -1,9 +1,5 @@
 /**
- * TODO:
- * 1. 数据结构（对应到本地或远程存储结构）
- *
- *
- * 股票数据访问层，主要用于计算和一些处理
+ * 股票数据获取和更新
  * 1. 后续会将数据的远程访问，本地访问在这里集成
  * 2.
  */
@@ -651,10 +647,4 @@ async function clearAllData() {
     }
 }
 
-export {
-    clearAllData,
-    updateData,
-    updateStockInfoData,
-    // updateStockDividendData,
-    stockDataNames,
-};
+export { clearAllData, updateData, updateStockInfoData, stockDataNames };
