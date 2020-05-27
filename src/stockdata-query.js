@@ -1,6 +1,7 @@
 /**
  * TODO:
  * 1. 数据结构（对应到本地或远程存储结构）
+ * 本地数据以json格式保存，
  *
  *
  * 股票数据访问层，主要用于计算和一些处理
@@ -33,9 +34,6 @@ const DATA_PATH = {
     info: "info",
     financial: "fin",
 };
-
-// const DAILYHISTORY_PATH = "daily";
-// const INFO_PATH = "info";
 const STOCKLIST_FILE = "stock-list.json";
 const INDEXLIST_FILE = "index-list.json";
 
@@ -313,13 +311,8 @@ export {
     readStockData,
     readStockList,
     readStockIndexList,
-    // readStockDaily,
-    // readStockAdjustFactor,
-    // readStockDailyBasic,
-    // checkDataPath,
     getDataRoot,
     getStockDataFile,
-    // DATA_PATH_ROOT,
     DATA_PATH,
     STOCKLIST_FILE,
     INDEXLIST_FILE,
