@@ -710,6 +710,21 @@ async function calculateDailyData(tsCode) {
     logger.info(`${tsCode}日线数据合并完成！`);
 }
 
+function calculatePrevAdjPrice(dailyData) {
+    if (dailyData && dailyData.data && dailyData.data.length > 0) {
+        dailyData.data.forEach((item) => {
+            if (item.prevadj_factor) {
+                item.open *= item.prevadj_factor;
+                item.close *= item.prevadj_factor;
+                item.high *= item.prevadj_factor;
+                item.low *= item.prevadj_factor;
+                item.prev_close *= item.prevadj_factor;
+                item.change *= item.prevadj_factor;
+            }
+        });
+    }
+}
+
 // 这里的data数据应该是原始数据
 // 这里要求的数据顺序是按照日期降序的，即0放的是最新的时间
 function removeIncludedData(data) {
@@ -747,8 +762,11 @@ function removeIncludedData(data) {
 function calculateNextTrendPoints(data) {
     let findPoints = [];
     // let nextType = 0
-    data.forEach((item, index, array) => {
-        if (index <= 1 || index >= array.length - 2) return;
+    // 这里考虑使用forEach是否并行过多？
+    //data.forEach((item, index, array) => {
+    for (let index = 2; index < data.length - 2; index++) {
+        let item = data[index];
+        //if (index <= 1 || index >= array.length - 2) return;
         let tmp = null;
         let lastPoint =
             findPoints.length > 0 ? findPoints[findPoints.length - 1] : null;
@@ -757,11 +775,11 @@ function calculateNextTrendPoints(data) {
 
         if (
             (item[2] === 0 &&
-                item[3].high >= array[index - 1][3].high &&
-                item[3].high >= array[index + 1][3].high) ||
+                item[3].high >= data[index - 1][3].high &&
+                item[3].high >= data[index + 1][3].high) ||
             (item[2] === 1 &&
-                item[1] >= array[index - 2][1] &&
-                item[1] >= array[index + 2][1])
+                item[1] >= data[index - 2][1] &&
+                item[1] >= data[index + 2][1])
         ) {
             // 发现高点
             tmp = [item[0], item[3].high, 1, item[3]];
@@ -784,11 +802,11 @@ function calculateNextTrendPoints(data) {
         }
         if (
             (item[2] === 0 &&
-                item[3].low <= array[index - 1][3].low &&
-                item[3].low <= array[index + 1][3].low) ||
+                item[3].low <= data[index - 1][3].low &&
+                item[3].low <= data[index + 1][3].low) ||
             (item[2] === -1 &&
-                item[1] <= array[index - 2][1] &&
-                item[1] <= array[index + 2][1])
+                item[1] <= data[index - 2][1] &&
+                item[1] <= data[index + 2][1])
         ) {
             // 发现低点
             tmp = [item[0], item[3].low, -1, item[3]];
@@ -814,7 +832,7 @@ function calculateNextTrendPoints(data) {
             //logger.debug("push trend point:", tmp);
             findPoints.push(tmp);
         }
-    });
+    }
     return findPoints;
 }
 
@@ -857,9 +875,15 @@ async function calculateTrendPoints(tsCode) {
         // await checkDataPath();
         let jsonStr = JSON.stringify(stockData);
         let stockDataFile = getStockDataFile(dataName, tsCode);
-        logger.debug(`保存个股${tsCode}趋势数据到：${stockDataFile}`);
         await fp.writeFile(stockDataFile, jsonStr, "utf-8");
         // }
+        logger.info(
+            `个股${tsCode}趋势数据保存：${stockDataFile}, 短期：${
+                trendPoints && trendPoints[0].length
+            }，中期：${trendPoints && trendPoints[1].length}，长期：${
+                trendPoints && trendPoints[2].length
+            }`
+        );
     } catch (error) {
         throw new Error(
             `保存个股${tsCode}数据${dataName}时出现错误，请检查后重新执行：${error}`
@@ -867,19 +891,21 @@ async function calculateTrendPoints(tsCode) {
     }
     indata = null;
 
-    return trendPoints;
+    // return trendPoints;
 }
 
 /**
  * TODO: 需要使用前复权方式计算趋势点，目前的计算用的原始数据，对于实际股票交易盈亏而言不正确
  */
 async function calculateAllTrendPoints() {
+    logger.info("内存使用：%o", process.memoryUsage());
     let stockList = await readStockList();
     if (!stockList || !stockList.data) {
         logger.error(`没有读取到股票列表，无法处理日线数据`);
         return;
     }
 
+    logger.info("内存使用：%o", process.memoryUsage());
     let dailyDataTasks = stockList.data.map((data) => {
         return {
             caller: calculateTrendPoints,
@@ -887,8 +913,9 @@ async function calculateAllTrendPoints() {
         };
     });
 
+    logger.info("内存使用：%o", process.memoryUsage());
     if (dailyDataTasks && dailyDataTasks.length > 0) {
-        let workers = executeTasks(dailyDataTasks, 30, "趋势数据计算");
+        let workers = executeTasks(dailyDataTasks, 20, "趋势数据计算");
         try {
             await Promise.all(workers);
         } catch (error) {
@@ -897,6 +924,7 @@ async function calculateAllTrendPoints() {
         workers = null;
     }
     logger.info(`趋势数据全部计算完毕！`);
+    logger.info("内存使用：%o", process.memoryUsage());
 }
 
 export {
