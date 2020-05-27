@@ -224,6 +224,11 @@ const stockDataParams = {
         path: DATA_PATH.financial,
         ext: ".pd",
     },
+    trend: {
+        name: "trend",
+        path: DATA_PATH.daily,
+        ext: ".tr",
+    },
 };
 
 async function readStockData(dataName, tsCode) {

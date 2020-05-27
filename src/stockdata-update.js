@@ -26,6 +26,7 @@ const logger = pino({
 });
 
 import {
+    readStockList,
     readStockData,
     getDataRoot,
     getStockDataFile,
@@ -154,10 +155,13 @@ async function updateStockInfoData(dataName, tsCode, force = false) {
         throw error;
     }
 
+    await saveStockDataFile(stockData, dataName, tsCode);
+}
+
+async function saveStockDataFile(stockData, dataName, tsCode) {
     try {
         if (stockData && stockData.data && stockData.data.length > 0) {
             // await checkDataPath();
-
             let jsonStr = JSON.stringify(stockData);
             let stockDataFile = getStockDataFile(dataName, tsCode);
             logger.debug(
@@ -651,10 +655,262 @@ async function clearAllData() {
     }
 }
 
+/**
+ * 根据股票列表和当前原始日线及复权因子数据合并完整的日线数据
+ */
+async function calculateAllDailyData() {
+    let stockList = await readStockList();
+    if (!stockList || !stockList.data) {
+        logger.error(`没有读取到股票列表，无法处理日线数据`);
+        return;
+    }
+
+    let dailyDataTasks = stockList.data.map((data) => {
+        return {
+            caller: calculateDailyData,
+            args: [data.ts_code],
+        };
+    });
+
+    if (dailyDataTasks && dailyDataTasks.length > 0) {
+        let workers = executeTasks(dailyDataTasks, 30, "日线数据合并");
+        try {
+            await Promise.all(workers);
+        } catch (error) {
+            logger.error(`日线数据合并任务执行发生未知异常：${error}`);
+        }
+    }
+}
+
+async function calculateDailyData(tsCode) {
+    if (_.isEmpty(tsCode)) return;
+    let dailyData = await readStockData(stockDataNames.daily, tsCode);
+    logger.debug(`日线${tsCode}读取到${dailyData.data.length}条数据`);
+    let adjData = await readStockData(stockDataNames.adjustFactor, tsCode);
+    logger.debug(`复权因子${tsCode}读取到${adjData.data.length}条数据`);
+
+    let latestAdj =
+        adjData && adjData.data && adjData.data.length > 0
+            ? adjData.data[0].adj_factor
+            : 1;
+    logger.debug(`${tsCode}最新复权因子: ${latestAdj}`);
+
+    if (dailyData && dailyData.data && dailyData.data.length > 0) {
+        dailyData.data = dailyData.data.map((daily) => {
+            // 日线数据中需要放入对应日期的复权因子和前复权因子=复权因子/最新复权因子
+            let dates = adjData.data.filter((adj) => {
+                return adj.trade_date === daily.trade_date;
+            });
+            logger.debug(`${daily.trade_date}, 寻找到adj：%o`, dates);
+            if (dates && dates.length > 0) {
+                daily.adj_factor = dates[0].adj_factor;
+                daily.prevadj_factor = dates[0].adj_factor / latestAdj;
+            }
+            return daily;
+        });
+    }
+
+    await saveStockDataFile(dailyData, stockDataNames.daily, tsCode);
+    logger.info(`${tsCode}日线数据合并完成！`);
+}
+
+// 这里的data数据应该是原始数据
+// 这里要求的数据顺序是按照日期降序的，即0放的是最新的时间
+function removeIncludedData(data) {
+    let ret = [];
+    if (!(data && Array.isArray(data))) return ret;
+    if (data.length <= 0) return ret;
+
+    let index = data.length - 1;
+    let item = data[index];
+
+    let currentIndex = index - 1;
+    while (currentIndex >= 0) {
+        let currentItem = data[currentIndex];
+        if (currentItem) {
+            if (currentItem.high <= item.high && currentItem.low >= item.low) {
+                // 内移日 这一天数据去除，也不需要和后续比较
+            } else {
+                // 非内移日
+                let tmp = [currentItem.trade_date, null, 0, currentItem];
+                ret.push(tmp);
+                index = currentIndex;
+                item = currentItem;
+            }
+            currentIndex = currentIndex - 1;
+        }
+    }
+    return ret;
+}
+
+/**
+ * 从当前日线数据序列中计算下一级趋势点
+ * 如果是第一级查找，则需要已经做好内移日去除
+ * @param {Array} data 日线数据，去除内移日的原始日线数据或者某一级趋势点数据
+ */
+function calculateNextTrendPoints(data) {
+    let findPoints = [];
+    // let nextType = 0
+    data.forEach((item, index, array) => {
+        if (index <= 1 || index >= array.length - 2) return;
+        let tmp = null;
+        let lastPoint =
+            findPoints.length > 0 ? findPoints[findPoints.length - 1] : null;
+        let lastType = lastPoint !== null ? lastPoint[2] : 0;
+        // findPoints.length > 0 ? findPoints[findPoints.length - 1][2] : 0
+
+        if (
+            (item[2] === 0 &&
+                item[3].high >= array[index - 1][3].high &&
+                item[3].high >= array[index + 1][3].high) ||
+            (item[2] === 1 &&
+                item[1] >= array[index - 2][1] &&
+                item[1] >= array[index + 2][1])
+        ) {
+            // 发现高点
+            tmp = [item[0], item[3].high, 1, item[3]];
+            logger.debug(`找到高点，序号${index}, %o`, item);
+            if (lastType === 1) {
+                logger.debug(
+                    `前一个点也是高点：, 当前序号${index}, 当前点：%o, 上一个点：%o`,
+                    tmp,
+                    lastPoint
+                );
+                if (lastPoint[1] < tmp[1]) {
+                    // 之前的高点比当前高点低，说明中间没有低点，替换之前的高点
+                    logger.debug("当前点价格更高，替换前一个点！");
+                    findPoints[findPoints.length - 1] = tmp;
+                } else {
+                    logger.debug("之前的高点比当前点高，忽略这次发现的高点");
+                }
+                tmp = null;
+            }
+        }
+        if (
+            (item[2] === 0 &&
+                item[3].low <= array[index - 1][3].low &&
+                item[3].low <= array[index + 1][3].low) ||
+            (item[2] === -1 &&
+                item[1] <= array[index - 2][1] &&
+                item[1] <= array[index + 2][1])
+        ) {
+            // 发现低点
+            tmp = [item[0], item[3].low, -1, item[3]];
+            logger.debug(`发现低点，序号${index}, %o`, item);
+            if (lastType === -1) {
+                logger.debug(
+                    `前一个点也是低点，当前序号${index}, 当前点：%o, 上一个点：%o`,
+                    tmp,
+                    lastPoint
+                );
+                if (lastPoint[1] > tmp[1]) {
+                    logger.debug("当前点比上一个点价格更低，替换上一个点！");
+                    findPoints[findPoints.length - 1] = tmp;
+                } else {
+                    logger.debug(
+                        "当前点比上一个点价格高，忽略这次发现的低点！"
+                    );
+                }
+                tmp = null;
+            }
+        }
+        if (tmp !== null) {
+            //logger.debug("push trend point:", tmp);
+            findPoints.push(tmp);
+        }
+    });
+    return findPoints;
+}
+
+/**
+ * 根据当前数据计算日短期趋势
+ * data输入为原始数据，在做短期高点和低点前，先去除内移交易日
+ */
+async function calculateTrendPoints(tsCode) {
+    if (_.isEmpty(tsCode)) return;
+    let dailyData = await readStockData(stockDataNames.daily, tsCode);
+
+    logger.debug(
+        `去除内移交易日..., ${
+            dailyData && dailyData.data && dailyData.data.length
+        }`
+    );
+    let indata = removeIncludedData(dailyData.data);
+    dailyData.data = null;
+    dailyData = null;
+    let trendPoints = [];
+
+    // 从基础数据循环3次，分别获得短期，中期和长期趋势
+    for (let i = 0; i < 3; i++) {
+        indata = calculateNextTrendPoints(indata);
+        trendPoints[i] = indata;
+        logger.debug(`趋势等级: ${i}, 趋势点数量 ${trendPoints[i].length}`);
+    }
+
+    logger.info(`${tsCode}趋势数据计算完毕！`);
+
+    try {
+        let stockData = {
+            updateTime: moment().toISOString(),
+            ts_code: tsCode,
+            data: trendPoints,
+        };
+        let dataName = "trend";
+
+        // if (stockData && stockData.data && stockData.data.length > 0) {
+        // await checkDataPath();
+        let jsonStr = JSON.stringify(stockData);
+        let stockDataFile = getStockDataFile(dataName, tsCode);
+        logger.debug(`保存个股${tsCode}趋势数据到：${stockDataFile}`);
+        await fp.writeFile(stockDataFile, jsonStr, "utf-8");
+        // }
+    } catch (error) {
+        throw new Error(
+            `保存个股${tsCode}数据${dataName}时出现错误，请检查后重新执行：${error}`
+        );
+    }
+    indata = null;
+
+    return trendPoints;
+}
+
+/**
+ * TODO: 需要使用前复权方式计算趋势点，目前的计算用的原始数据，对于实际股票交易盈亏而言不正确
+ */
+async function calculateAllTrendPoints() {
+    let stockList = await readStockList();
+    if (!stockList || !stockList.data) {
+        logger.error(`没有读取到股票列表，无法处理日线数据`);
+        return;
+    }
+
+    let dailyDataTasks = stockList.data.map((data) => {
+        return {
+            caller: calculateTrendPoints,
+            args: [data.ts_code],
+        };
+    });
+
+    if (dailyDataTasks && dailyDataTasks.length > 0) {
+        let workers = executeTasks(dailyDataTasks, 30, "趋势数据计算");
+        try {
+            await Promise.all(workers);
+        } catch (error) {
+            logger.error(`趋势数据合并任务执行发生未知异常：${error}`);
+        }
+        workers = null;
+    }
+    logger.info(`趋势数据全部计算完毕！`);
+}
+
 export {
     clearAllData,
     updateData,
     updateStockInfoData,
     // updateStockDividendData,
+    calculateAllDailyData,
+    calculateDailyData,
+    calculateAllTrendPoints,
+    calculateTrendPoints,
     stockDataNames,
 };

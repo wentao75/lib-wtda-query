@@ -7,6 +7,10 @@ import {
     clearAllData,
     updateData,
     updateStockInfoData,
+    calculateAllDailyData,
+    calculateDailyData,
+    calculateAllTrendPoints,
+    calculateTrendPoints,
     stockDataNames,
 } from "./stockdata-update";
 
@@ -17,5 +21,9 @@ export {
     clearAllData,
     updateData,
     updateStockInfoData,
+    calculateAllDailyData,
+    calculateDailyData,
+    calculateAllTrendPoints,
+    calculateTrendPoints,
     stockDataNames,
 };
