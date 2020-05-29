@@ -163,6 +163,8 @@ const stockDataNames = {
     pledgeStat: "pledgeStat",
     // 股权质押明细
     pledgeDetail: "pledgeDetail",
+    // 趋势
+    trend: "trend",
 };
 
 const stockDataParams = {
@@ -255,7 +257,17 @@ async function readStockData(dataName, tsCode) {
             retData = JSON.parse(await fp.readFile(dataFile, "utf-8"));
         } catch (error) {
             // 文件不存在，不考虑其它错误
-            logger.debug(`读取文件时发生错误：${error}`);
+            if (!(error && error.code === "ENOENT")) {
+                logger.error(
+                    `读取${tsCode}的${dataName}文件${dataFile}时发生错误：${error}, %o`,
+                    error
+                );
+            } else {
+                logger.debug(
+                    `读取${tsCode}的${dataName}文件${dataFile}不存在，%o`,
+                    error
+                );
+            }
             retData = { data: [] };
         }
     } catch (error) {

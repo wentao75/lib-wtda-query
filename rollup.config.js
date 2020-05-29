@@ -5,8 +5,8 @@ import commonjs from "@rollup/plugin-commonjs";
 import { name } from "./package.json";
 
 export default {
-    input: "src/stockdata.js",
-    external: ["moment", "lodash", "axios", "lib-flowcontrol", "lib-tushare"],
+    input: "src/stockdata-query.js",
+    external: ["moment", "lodash", "pino"],
     plugins: [
         resolve(),
         babel({
@@ -20,13 +20,13 @@ export default {
     ],
     output: [
         {
-            file: "stockdata.js",
+            file: "stockdata-query.js",
             format: "umd",
             name,
             sourcemap: true,
         },
         {
-            file: "stockdata.esm.js",
+            file: "stockdata-query.esm.js",
             format: "es",
         },
     ],
